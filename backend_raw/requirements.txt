@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+python-multipart
+numpy<2.2
+opencv-python-headless
+mediapipe==1.1.0
+onnxruntime
