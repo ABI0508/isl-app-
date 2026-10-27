@@ -15,6 +15,7 @@
   button.grey { background:#6b7690; }
   button.green { background:#16803c; }
   button.orange { background:#d97706; }
+  button.small { width:auto; padding:8px 12px; font-size:14px; }
   input[type=text],input[type=tel],input[type=file] { width:100%; padding:10px; font-size:15px; margin:5px 0; }
   video { width:100%; border-radius:10px; background:#111; }
   .note { font-size:13px; color:#65718a; line-height:1.45; }
@@ -31,34 +32,43 @@
   @media (min-width:480px) { .actions-grid { grid-template-columns:1fr 1fr; } }
   .pred-result { margin-top:8px; padding:10px; border-radius:8px; background:#eef4ff; border:1px solid #c7d7f5; font-size:14px; }
   .pred-result strong { color:#1a3a8a; }
+  .contact-row { display:flex; gap:8px; align-items:center; border:1px solid #d4dbe8; border-radius:10px; padding:10px; margin:8px 0; background:#fafbff; }
+  .contact-row .info { flex:1; }
+  .contact-row .info .cname { font-weight:700; }
+  .contact-row .info .cnum { font-size:13px; color:#65718a; }
+  .modal { position:fixed; inset:0; z-index:100; background:rgba(0,0,0,.55); display:flex; align-items:flex-start; justify-content:center; padding:14px; overflow-y:auto; }
+  .modal-card { background:#fff; border-radius:14px; max-width:560px; width:100%; padding:18px; margin-top:20px; }
+  .modal-card h3 { margin-top:0; }
 </style>
 </head>
 <body>
 <h2>ISL Emergency Communicator</h2>
-<p class="note">Prototype for communication support, not a medical diagnosis. Sign videos and emergency contact are stored on this device/browser. Keep your phone's built-in SOS enabled too.</p>
+<p class="note">Prototype for communication support, not a medical diagnosis. Sign videos and emergency contacts are stored on this device/browser. Keep your phone's built-in SOS enabled too.</p>
 
 <div class="card" id="sosCard" style="border:3px solid #dc2626;background:#fff5f5">
   <h2 style="color:#dc2626;margin:0 0 8px">ACCIDENT SOS</h2>
-  <p>Tap to get your current location and prepare an emergency SMS.</p>
+  <p>Tap to get your current location and prepare an emergency SMS for every saved contact.</p>
   <button class="red" id="sosBtn" onclick="accidentSOS()" style="font-size:23px;padding:22px">ACCIDENT — SEND SOS</button>
   <p id="gpsStatus" class="note" aria-live="polite">Location not checked yet.</p>
-  <p class="note">The messaging app opens with the message filled in. You must press Send. GPS requires HTTPS (or localhost) and location permission.</p>
+  <p class="note">You must press Send in each messaging app window. GPS requires HTTPS (or localhost) and location permission.</p>
 </div>
 
 <div class="card">
-  <h3>Emergency contact</h3>
+  <h3>Emergency contacts</h3>
+  <p class="note">Add one or more contacts. Each one must have agreed to be your emergency contact. All saved contacts will be offered when you send SOS or a sign action.</p>
   <label for="cname">Contact name</label>
   <input id="cname" type="text" placeholder="Contact name" autocomplete="name">
   <label for="cnum">Phone number</label>
   <input id="cnum" type="tel" placeholder="+91XXXXXXXXXX" autocomplete="tel">
   <label class="note"><input type="checkbox" id="consent"> This person agreed to be my emergency contact.</label>
-  <button onclick="saveContact()">Save emergency contact</button>
-  <div id="saved" class="note">No contact saved yet.</div>
+  <button onclick="addContact()">Add contact</button>
+  <div id="contactList"></div>
+  <p id="saved" class="note">No contacts saved yet.</p>
 </div>
 
 <div class="card">
   <h3>Five sign videos (upload + predict + action)</h3>
-  <p class="note">Upload one reference video for each sign. Videos are saved in this browser on this device using IndexedDB. Use "Predict this video" to run the model. After the result, press the action button to trigger the correct action for that sign. Nothing is sent until you press the button.</p>
+  <p class="note">Upload one reference video for each sign. Videos are saved in this browser on this device using IndexedDB. Use "Predict this video" to run the model. After the result, press the action button to trigger the correct action for that sign. Nothing is sent until you press a button.</p>
   <div id="videoButtons"></div>
   <video id="referenceVideo" controls playsinline preload="metadata" class="hide"></video>
   <p id="videoStatus" class="note" aria-live="polite"></p>
@@ -83,7 +93,7 @@
   <div class="big" id="label"></div>
   <p id="msg"></p>
   <div id="actions" class="actions-grid">
-    <button class="red" onclick="handleEmergency()">Send emergency SMS</button>
+    <button class="red" onclick="handleEmergency()">Send emergency SMS to all contacts</button>
     <button class="grey" onclick="playCurrentAlert()">Play nearby alert</button>
   </div>
   <button class="grey" onclick="cancelAll()">Cancel (wrong sign)</button>
@@ -93,6 +103,15 @@
   <div style="font-size:48px;font-weight:900;line-height:1.2">PLEASE HELP!<br>உதவுங்கள்!</div>
   <div style="font-size:20px;margin:18px 0 28px">Someone nearby needs help.</div>
   <button onclick="hideNearby()" style="background:#fff;color:#dc2626;width:auto;padding:14px 28px;font-weight:800">Close alert</button>
+</div>
+
+<div id="smsModal" class="hide modal">
+  <div class="modal-card">
+    <h3 id="smsModalTitle">Open SMS for each contact</h3>
+    <p class="note" id="smsModalNote">Tap each contact to open your messaging app with the message and location filled in. Then press Send there. Your browser does not allow opening all of them automatically.</p>
+    <div id="smsModalList"></div>
+    <button class="grey" onclick="closeSmsModal()">Close</button>
+  </div>
 </div>
 
 <script type="module">
@@ -121,24 +140,64 @@ const $ = id => document.getElementById(id);
 let stream = null, current = null, landmarker = null, session = null, scaler = null;
 let activeVideoUrl = null;
 
-// ---------- EMERGENCY CONTACT ----------
-function loadContact() {
-  try { return JSON.parse(localStorage.getItem("isl_contact") || "null"); }
-  catch { return null; }
+// ---------- EMERGENCY CONTACTS (multiple) ----------
+const CONTACTS_KEY = "isl_contacts_v2";
+function loadContacts() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(CONTACTS_KEY) || "[]");
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
 }
-function showSaved() {
-  const c = loadContact();
-  $("saved").textContent = c ? `Saved: ${c.name} (${c.num})` : "No contact saved yet.";
-  if (c) { $("cname").value = c.name || ""; $("cnum").value = c.num || ""; }
+function saveContacts(list) {
+  localStorage.setItem(CONTACTS_KEY, JSON.stringify(list));
 }
-window.saveContact = function() {
+function renderContacts() {
+  const list = loadContacts();
+  const box = $("contactList");
+  box.replaceChildren();
+  if (!list.length) {
+    $("saved").textContent = "No contacts saved yet.";
+    return;
+  }
+  $("saved").textContent = `${list.length} contact(s) saved on this device.`;
+  list.forEach((c, i) => {
+    const row = document.createElement("div");
+    row.className = "contact-row";
+    const info = document.createElement("div");
+    info.className = "info";
+    const n = document.createElement("div");
+    n.className = "cname";
+    n.textContent = c.name || "Emergency contact";
+    const num = document.createElement("div");
+    num.className = "cnum";
+    num.textContent = c.num;
+    info.append(n, num);
+    const del = document.createElement("button");
+    del.className = "grey small";
+    del.textContent = "Remove";
+    del.onclick = () => {
+      if (!confirm("Remove contact " + (c.name || c.num) + "?")) return;
+      const cur = loadContacts();
+      cur.splice(i, 1);
+      saveContacts(cur);
+      renderContacts();
+    };
+    row.append(info, del);
+    box.append(row);
+  });
+}
+window.addContact = function() {
   const name = $("cname").value.trim();
   const num = $("cnum").value.replace(/[^\d+]/g, "");
   if (!$("consent").checked) return alert("Please confirm the contact agreed.");
   if (num.replace(/\D/g, "").length < 8) return alert("Enter a valid phone number.");
-  localStorage.setItem("isl_contact", JSON.stringify({name: name || "Emergency contact", num}));
-  showSaved();
-  alert("Emergency contact saved on this device.");
+  const list = loadContacts();
+  if (list.some(c => c.num === num)) return alert("This number is already saved.");
+  list.push({name: name || "Emergency contact", num});
+  saveContacts(list);
+  $("cname").value = ""; $("cnum").value = ""; $("consent").checked = false;
+  renderContacts();
+  alert("Contact added on this device.");
 };
 
 // ---------- LOCATION ----------
@@ -181,15 +240,92 @@ function emergencyText(message, loc) {
   }
   return text;
 }
-function openSMS(number, message) {
-  if (!number) return alert("Please save an emergency contact first.");
+function smsHref(number, message) {
   const sep = /iPhone|iPad|iPod/i.test(navigator.userAgent) ? "&" : "?";
-  window.location.href = `sms:${number}${sep}body=${encodeURIComponent(message)}`;
+  return `sms:${number}${sep}body=${encodeURIComponent(message)}`;
 }
+
+// ---------- SMS MODAL (one button per contact) ----------
+let smsModalState = null;
+window.closeSmsModal = function() {
+  $("smsModal").classList.add("hide");
+  $("smsModalList").replaceChildren();
+  smsModalState = null;
+};
+function openSmsModal(contacts, message, title, note) {
+  smsModalState = {contacts, message};
+  $("smsModalTitle").textContent = title || "Open SMS for each contact";
+  $("smsModalNote").textContent = note ||
+    "Tap each contact to open your messaging app with the message and location filled in. Then press Send there. Your browser does not allow opening all of them automatically.";
+  const list = $("smsModalList");
+  list.replaceChildren();
+  contacts.forEach((c, i) => {
+    const b = document.createElement("button");
+    b.className = "red";
+    b.textContent = `Open SMS for ${c.name || "contact"} (${c.num})`;
+    b.onclick = () => {
+      window.location.href = smsHref(c.num, message);
+    };
+    list.append(b);
+  });
+  const all = document.createElement("p");
+  all.className = "note";
+  all.textContent = `You have ${contacts.length} contact(s). Open each one and press Send in your messaging app. Location used for all: one reading taken just now.`;
+  list.append(all);
+  $("smsModal").classList.remove("hide");
+}
+
+// ---------- SHARED ACTION FOR A SIGN ----------
+// "call" => nearby alert + sound (no SMS). Others => SMS modal with one button per contact,
+// using a single GPS reading shared across contacts.
+async function triggerActionForSign(sign, onStatus) {
+  if (sign === "call") {
+    if (onStatus) onStatus("Showing nearby attention alert (no SMS for CALL).");
+    showNearby();
+    return;
+  }
+  const contacts = loadContacts();
+  if (!contacts.length) {
+    alert("Please add at least one emergency contact first.");
+    if (onStatus) onStatus("No emergency contacts saved.");
+    return;
+  }
+  if (onStatus) onStatus("Getting current location...");
+  let loc = null;
+  try {
+    loc = await getCurrentLocation(7000);
+    if (onStatus) onStatus("Location obtained. Choose a contact to open SMS.");
+  } catch {
+    loc = getLastLocation();
+    if (onStatus) onStatus(loc
+      ? "GPS unavailable. Using last saved location (may be outdated)."
+      : "Location unavailable. Opening SMS without a location link.");
+  }
+  const msg = emergencyText(MESSAGES[sign] || MESSAGES.help, loc);
+  playEmergencySound("Emergency alert. Please help.");
+  openSmsModal(
+    contacts,
+    msg,
+    `Send "${sign.toUpperCase()}" SMS to each contact`,
+    "Tap each contact to open your messaging app with the message and live location. Press Send in each app. The location is the same for all contacts (one reading)."
+  );
+}
+window.handleEmergency = async function() {
+  if (!current) return;
+  await triggerActionForSign(current, t => { $("status").textContent = t; });
+};
+
+window.cancelAll = function() {
+  current = null;
+  $("confirm").classList.add("hide");
+  $("status").textContent = "Cancelled. No action taken.";
+};
+
+// ---------- SOS ----------
 window.accidentSOS = async function() {
-  const contact = loadContact();
-  if (!contact) {
-    alert("Please save an emergency contact first.");
+  const contacts = loadContacts();
+  if (!contacts.length) {
+    alert("Please add at least one emergency contact first.");
     $("cname").focus();
     return;
   }
@@ -199,7 +335,7 @@ window.accidentSOS = async function() {
   let loc = null;
   try {
     loc = await getCurrentLocation(7000);
-    $("gpsStatus").textContent = "Current location obtained. Opening SMS...";
+    $("gpsStatus").textContent = "Current location obtained. Choose a contact to open SMS.";
   } catch {
     loc = getLastLocation();
     $("gpsStatus").textContent = loc
@@ -211,7 +347,12 @@ window.accidentSOS = async function() {
     loc
   );
   playEmergencySound("Emergency alert. Please help.");
-  openSMS(contact.num, body);
+  openSmsModal(
+    contacts,
+    body,
+    "ACCIDENT SOS — open SMS for each contact",
+    "Tap each contact to open your messaging app with the SOS message and live location. Press Send in each app. The location is the same for all contacts (one reading)."
+  );
   button.disabled = false;
 };
 
@@ -242,47 +383,6 @@ window.playCurrentAlert = function() {
     : current === "accident" ? "Emergency. Accident. Please help."
     : "I need help. Please come here.";
   playEmergencySound(spoken);
-};
-
-// ---------- SHARED ACTION FOR A SIGN ----------
-// Used by BOTH camera recognition and uploaded-video prediction.
-// "call" = nearby alert + sound (no SMS). All other signs = SMS + live location + sound.
-async function triggerActionForSign(sign, onStatus) {
-  if (sign === "call") {
-    if (onStatus) onStatus("Showing nearby attention alert (no SMS for CALL).");
-    showNearby();
-    return;
-  }
-  const c = loadContact();
-  if (!c) {
-    alert("Please save an emergency contact first.");
-    if (onStatus) onStatus("No emergency contact saved.");
-    return;
-  }
-  if (onStatus) onStatus("Getting current location...");
-  let loc = null;
-  try {
-    loc = await getCurrentLocation(7000);
-    if (onStatus) onStatus("Location obtained. Opening SMS...");
-  } catch {
-    loc = getLastLocation();
-    if (onStatus) onStatus(loc
-      ? "GPS unavailable. Using last saved location (may be outdated)."
-      : "Location unavailable. Opening SMS without a location link.");
-  }
-  const msg = emergencyText(MESSAGES[sign] || MESSAGES.help, loc);
-  playEmergencySound("Emergency alert. Please help.");
-  openSMS(c.num, msg);
-}
-window.handleEmergency = async function() {
-  if (!current) return;
-  await triggerActionForSign(current, t => { $("status").textContent = t; });
-};
-
-window.cancelAll = function() {
-  current = null;
-  $("confirm").classList.add("hide");
-  $("status").textContent = "Cancelled. No action taken.";
 };
 
 // ---------- FIVE UPLOADABLE VIDEO SLOTS (IndexedDB) ----------
@@ -473,13 +573,13 @@ function renderVideoButtons() {
         const isCall = result.label === "call";
         const actionLabel = isCall
           ? "Show nearby alert (no SMS for CALL)"
-          : "Send emergency SMS with live location (" + result.label.toUpperCase() + ")";
+          : "Send emergency SMS to all contacts (" + result.label.toUpperCase() + ")";
         resBox.innerHTML =
           `<strong>Result: ${result.label.toUpperCase()} (${topPct}%)</strong>` +
           `<div class="note" style="margin-top:4px">${matched ? "Matches the uploaded sign." : "Does not match the uploaded sign."}</div>` +
           `<div style="margin-top:6px;font-size:13px">${rows}</div>` +
           `<div class="note" style="margin-top:4px">Hands detected in ${(result.anyRate * 100).toFixed(0)}% of sampled frames.</div>` +
-          `<button class="${isCall ? "red" : "red"}" style="margin-top:10px" data-predaction="${result.label}">${actionLabel}</button>` +
+          `<button class="red" style="margin-top:10px" data-predaction="${result.label}">${actionLabel}</button>` +
           `<p class="note" id="predStatus_${item.key}" aria-live="polite"></p>`;
         const actionBtn = resBox.querySelector("[data-predaction]");
         actionBtn.onclick = async () => {
@@ -756,13 +856,13 @@ function showConfirm(label,conf) {
   $("label").textContent=label.toUpperCase()+" ("+Math.round(conf*100)+"%)";
   $("msg").textContent = label==="call"
     ? "This action shows a nearby attention alert. No SMS and no phone call is made."
-    : "Review the suggested action before continuing. SMS is not sent until you press Send in your messaging app.";
+    : "Review the suggested action before continuing. SMS is not sent until you press Send in your messaging app for each contact.";
   $("actions").classList.toggle("hide",label==="call");
   $("confirm").classList.remove("hide");
   if (label==="call") showNearby();
 }
 
-showSaved();
+renderContacts();
 renderVideoButtons();
 init();
 </script>
