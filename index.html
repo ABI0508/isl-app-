@@ -1,317 +1,622 @@
 <!DOCTYPE html>
-<html lang="en"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ISL Emergency Communicator</title>
 <style>
- body{font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:14px;background:#f5f7fb;color:#1a2233}
- .card{background:#fff;border:1px solid #d4dbe8;border-radius:12px;padding:16px;margin:12px 0}
- button{font-size:17px;padding:12px 16px;border-radius:10px;border:0;background:#3b6fe0;color:#fff;margin:4px 0;width:100%}
- button:disabled{background:#9aa5bd}
- button.red{background:#dc2626} button.grey{background:#6b7690} button.green{background:#16a34a}
- input[type=text],input[type=tel]{width:100%;box-sizing:border-box;padding:10px;font-size:16px;margin:4px 0}
- video{width:100%;border-radius:10px;background:#000}
- .big{font-size:30px;font-weight:800;text-align:center} .note{font-size:13px;color:#6b7690}
- .hide{display:none}
- .vwrap{position:relative} #ovl{position:absolute;left:0;right:0;top:0;bottom:0;display:flex;align-items:center;justify-content:center;flex-direction:column;font-size:96px;font-weight:900;color:#fff;text-shadow:0 4px 18px #000;pointer-events:none;text-align:center}
- #box{position:absolute;left:12%;top:12%;width:76%;height:76%;border:3px dashed rgba(255,255,255,.85);border-radius:14px;pointer-events:none}
- .rec{background:rgba(200,0,0,.45)} #dbg{font-size:12px;color:#6b7690;white-space:pre-wrap}
-</style></head><body>
+  :root { font-family: Arial, sans-serif; color:#1a2233; background:#f5f7fb; }
+  * { box-sizing:border-box; }
+  body { max-width:620px; margin:0 auto; padding:14px; }
+  .card { background:#fff; border:1px solid #d4dbe8; border-radius:14px; padding:16px; margin:12px 0; }
+  button { font-size:16px; padding:12px 14px; border-radius:10px; border:0; background:#3b6fe0; color:#fff; margin:5px 0; width:100%; cursor:pointer; }
+  button:disabled { background:#9aa5bd; cursor:not-allowed; }
+  button.red { background:#dc2626; }
+  button.grey { background:#6b7690; }
+  button.green { background:#16803c; }
+  input[type=text],input[type=tel],input[type=file] { width:100%; padding:10px; font-size:15px; margin:5px 0; }
+  video { width:100%; border-radius:10px; background:#111; }
+  .note { font-size:13px; color:#65718a; line-height:1.45; }
+  .big { font-size:28px; font-weight:800; text-align:center; }
+  .hide { display:none !important; }
+  .vwrap { position:relative; }
+  #ovl { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; font-size:76px; font-weight:900; color:#fff; text-shadow:0 4px 18px #000; pointer-events:none; text-align:center; }
+  #box { position:absolute; left:12%; top:12%; width:76%; height:76%; border:3px dashed rgba(255,255,255,.85); border-radius:14px; pointer-events:none; }
+  .rec { background:rgba(200,0,0,.45); }
+  #dbg { font-size:12px; color:#6b7690; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .sign-row { border:1px solid #d4dbe8; border-radius:10px; padding:10px; margin:10px 0; }
+  .sign-row strong { display:block; margin-bottom:4px; }
+  .actions-grid { display:grid; grid-template-columns:1fr; gap:5px; }
+  @media (min-width:480px) { .actions-grid { grid-template-columns:1fr 1fr; } }
+</style>
+</head>
+<body>
 <h2>ISL Emergency Communicator</h2>
-<p class="note">Prototype. The output is a communication request, not a medical diagnosis. Nothing is sent without your confirmation.
-Recognises 5 signs: help, doctor, pain, call, accident. The camera video is processed on your device and is never uploaded.</p>
-<div class="card"><b id="loadmsg">Loading models...</b></div>
+<p class="note">Prototype for communication support, not a medical diagnosis. Sign videos and emergency contact are stored on this device/browser. Keep your phone's built-in SOS enabled too.</p>
 
-<div class="card">
- <b>Emergency contact (saved only on this device)</b>
- <input id="cname" type="text" placeholder="Contact name">
- <input id="cnum" type="tel" placeholder="Phone number e.g. +91XXXXXXXXXX">
- <label class="note"><input type="checkbox" id="consent"> This person agreed to be my emergency contact.</label>
- <button onclick="saveContact()">Save contact</button>
- <div id="saved" class="note"></div>
+<div class="card" id="sosCard" style="border:3px solid #dc2626;background:#fff5f5">
+  <h2 style="color:#dc2626;margin:0 0 8px">ACCIDENT SOS</h2>
+  <p>Tap to get your current location and prepare an emergency SMS.</p>
+  <button class="red" id="sosBtn" onclick="accidentSOS()" style="font-size:23px;padding:22px">ACCIDENT — SEND SOS</button>
+  <p id="gpsStatus" class="note" aria-live="polite">Location not checked yet.</p>
+  <p class="note">The messaging app opens with the message filled in. You must press Send. GPS requires HTTPS (or localhost) and location permission.</p>
 </div>
 
 <div class="card">
- <div class="vwrap"><video id="cam" autoplay muted playsinline style="transform:scaleX(-1)"></video><div id="box"></div><div id="ovl"></div></div>
- <p class="note">Sit about 1.5 m from the camera with both hands, head and shoulders visible. Use a well-lit room. Landscape works best on phones.</p>
- <button onclick="startCam()">1. Open camera</button>
- <button class="green" id="recbtn" onclick="recordSign()" disabled>2. Record sign (5 s countdown + 3 s)</button>
- <button class="grey" id="chkbtn" onclick="checkHands()" disabled>Check hands now (test)</button>
- <p class="note">Or upload a short video of a sign:</p>
- <input type="file" id="up" accept="video/*" onchange="uploadFile(this.files[0])">
- <div id="status" class="note"></div>
- <div id="dbg"></div>
+  <h3>Emergency contact</h3>
+  <label for="cname">Contact name</label>
+  <input id="cname" type="text" placeholder="Contact name" autocomplete="name">
+  <label for="cnum">Phone number</label>
+  <input id="cnum" type="tel" placeholder="+91XXXXXXXXXX" autocomplete="tel">
+  <label class="note"><input type="checkbox" id="consent"> This person agreed to be my emergency contact.</label>
+  <button onclick="saveContact()">Save emergency contact</button>
+  <div id="saved" class="note">No contact saved yet.</div>
 </div>
 
-<div id="nearby" class="hide" style="position:fixed;inset:0;z-index:99;background:#dc2626;color:#fff;display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:20px">
- <div style="font-size:54px;font-weight:900;line-height:1.2">COME HERE!<br>இங்க வா!</div>
- <div style="font-size:20px;margin:18px 0 28px">Someone nearby is calling you.</div>
- <button onclick="hideNearby()" style="background:#fff;color:#dc2626;width:auto;padding:14px 28px;font-weight:800">Close</button>
+<div class="card">
+  <h3>Five preloaded sign videos</h3>
+  <p class="note">Upload one reference video for each sign. Videos are saved in this browser on this device using IndexedDB. If browser storage is cleared or you change device/browser, upload them again. Keep videos reasonably small.</p>
+  <div id="videoButtons"></div>
+  <video id="referenceVideo" controls playsinline preload="metadata" class="hide"></video>
+  <p id="videoStatus" class="note" aria-live="polite"></p>
+  <button class="grey" onclick="clearAllVideos()">Clear all saved videos</button>
 </div>
+
+<div class="card">
+  <h3>Recognise a sign with the camera</h3>
+  <div class="vwrap">
+    <video id="cam" autoplay muted playsinline style="transform:scaleX(-1)"></video>
+    <div id="box"></div><div id="ovl"></div>
+  </div>
+  <p class="note">Use a well-lit room and keep both hands visible. Camera/model recognition may take a few seconds.</p>
+  <button onclick="startCam()">1. Open camera</button>
+  <button class="green" id="recbtn" onclick="recordSign()" disabled>2. Record sign (3 seconds)</button>
+  <button class="grey" id="chkbtn" onclick="checkHands()" disabled>Check hands now</button>
+  <p id="status" class="note" aria-live="polite"></p>
+  <div id="dbg"></div>
+</div>
+
 <div class="card hide" id="confirm">
- <div class="big" id="label"></div>
- <p id="msg"></p>
- <div id="nearbyActions" class="hide">
-  <button class="green" onclick="showNearby()">📢 Show "Come here!" alert</button>
- </div>
- <div id="actions">
-  <button class="red" onclick="doCall()">📞 Call my emergency contact</button>
-  <button onclick="doSms()">✉️ Send SMS to my emergency contact</button>
- </div>
- <button class="grey" onclick="cancelAll()">Cancel (wrong sign)</button>
+  <div class="big" id="label"></div>
+  <p id="msg"></p>
+  <div id="actions" class="actions-grid">
+    <button class="red" onclick="handleEmergency()">Send emergency SMS</button>
+    <button class="grey" onclick="playCurrentAlert()">Play nearby alert</button>
+  </div>
+  <button class="grey" onclick="cancelAll()">Cancel (wrong sign)</button>
+</div>
+
+<div id="nearby" class="hide" style="position:fixed;inset:0;z-index:99;background:#dc2626;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:20px">
+  <div style="font-size:48px;font-weight:900;line-height:1.2">PLEASE HELP!<br>உதவுங்கள்!</div>
+  <div style="font-size:20px;margin:18px 0 28px">Someone nearby needs help.</div>
+  <button onclick="hideNearby()" style="background:#fff;color:#dc2626;width:auto;padding:14px 28px;font-weight:800">Close alert</button>
 </div>
 
 <script type="module">
-
-// ---- settings (placeholders: tune on idle clips) ----
-const CONF_MIN = 0.70, ANY_RATE_MIN = 0.30;
-const SEQ = 30, DIM = 126, W = 640, H = 480;
-const CLASSES = ["help","doctor","pain","call","accident"];
+// ---------- CONFIGURATION ----------
+const CONF_MIN = 0.70;
+const ANY_RATE_MIN = 0.30;
+const SEQ = 30;
+const DIM = 126;
+const W = 640, H = 480;
+const CLASSES = ["help", "doctor", "pain", "call", "accident"];
 const MESSAGES = {
- accident: "EMERGENCY: I have had an accident. Please call me or send help.",
- pain:     "I am in pain and need medical help. Please contact me.",
- doctor:   "I need a doctor. Please help me contact one.",
- call:     "Please call me. I cannot speak.",
- help:     "I need help. Please come to me or call me."
+  accident: "EMERGENCY: I may have had an accident. Please send help immediately.",
+  pain: "I am in pain and need medical help. Please contact me.",
+  doctor: "EMERGENCY: I need a doctor. Please help me contact one.",
+  call: "I need your attention. Please come here and help me.",
+  help: "I need help. Please come to me or contact me."
 };
+const VIDEO_SIGNS = [
+  {key:"help", label:"HELP"},
+  {key:"doctor", label:"DOCTOR"},
+  {key:"pain", label:"PAIN"},
+  {key:"call", label:"CALL"},
+  {key:"accident", label:"ACCIDENT"}
+];
 const $ = id => document.getElementById(id);
-let stream=null, current=null, landmarker=null, session=null, scaler=null;
+let stream = null, current = null, landmarker = null, session = null, scaler = null;
+let activeVideoUrl = null;
 
-// ---------- contact ----------
-function loadContact(){ try{ return JSON.parse(localStorage.getItem("isl_contact")||"null"); }catch(e){ return null; } }
-function showSaved(){
-  const c=loadContact();
-  $("saved").textContent = c ? `Saved: ${c.name} (${c.num})` : "No contact saved yet.";
-  if(c){ $("cname").value=c.name; $("cnum").value=c.num; }
+// ---------- EMERGENCY CONTACT ----------
+function loadContact() {
+  try { return JSON.parse(localStorage.getItem("isl_contact") || "null"); }
+  catch { return null; }
 }
-window.saveContact = function(){
-  const name=$("cname").value.trim(), num=$("cnum").value.replace(/[^\d+]/g,"");
-  if(!$("consent").checked) return alert("Please confirm the contact agreed.");
-  if(num.length<8) return alert("Enter a valid number.");
-  localStorage.setItem("isl_contact", JSON.stringify({name,num}));
+function showSaved() {
+  const c = loadContact();
+  $("saved").textContent = c ? `Saved: ${c.name} (${c.num})` : "No contact saved yet.";
+  if (c) { $("cname").value = c.name || ""; $("cnum").value = c.num || ""; }
+}
+window.saveContact = function() {
+  const name = $("cname").value.trim();
+  const num = $("cnum").value.replace(/[^\d+]/g, "");
+  if (!$("consent").checked) return alert("Please confirm the contact agreed.");
+  if (num.replace(/\D/g, "").length < 8) return alert("Enter a valid phone number.");
+  localStorage.setItem("isl_contact", JSON.stringify({name: name || "Emergency contact", num}));
   showSaved();
+  alert("Emergency contact saved on this device.");
 };
 
-// ---------- model loading (tries several library versions, reports which stage fails) ----------
-function loadScript(url){
-  return new Promise((res,rej)=>{
-    const el=document.createElement("script"); el.src=url;
-    el.onload=res; el.onerror=()=>rej(new Error("could not load "+url));
+// ---------- LOCATION ----------
+const LAST_LOCATION_KEY = "isl_last_location";
+function saveLastLocation(position) {
+  const loc = {
+    lat: position.coords.latitude,
+    lon: position.coords.longitude,
+    accuracy: position.coords.accuracy,
+    time: Date.now()
+  };
+  localStorage.setItem(LAST_LOCATION_KEY, JSON.stringify(loc));
+  return loc;
+}
+function getLastLocation() {
+  try { return JSON.parse(localStorage.getItem(LAST_LOCATION_KEY) || "null"); }
+  catch { return null; }
+}
+function getCurrentLocation(timeout = 7000) {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) return reject(new Error("Geolocation unsupported"));
+    navigator.geolocation.getCurrentPosition(
+      p => resolve(saveLastLocation(p)),
+      e => reject(e),
+      {enableHighAccuracy:true, timeout, maximumAge:30000}
+    );
+  });
+}
+function mapsLink(loc) {
+  return loc ? `https://maps.google.com/?q=${loc.lat},${loc.lon}` : "";
+}
+function emergencyText(message, loc) {
+  let text = message;
+  if (loc) {
+    text += "\nLocation: " + mapsLink(loc);
+    text += "\nLocation reading time: " + new Date(loc.time).toLocaleString();
+    text += "\nEstimated GPS accuracy: " + Math.round(loc.accuracy) + " metres.";
+  } else {
+    text += "\nCurrent location unavailable. Please call/message me and help locate me.";
+  }
+  return text;
+}
+function openSMS(number, message) {
+  if (!number) return alert("Please save an emergency contact first.");
+  const sep = /iPhone|iPad|iPod/i.test(navigator.userAgent) ? "&" : "?";
+  window.location.href = `sms:${number}${sep}body=${encodeURIComponent(message)}`;
+}
+window.accidentSOS = async function() {
+  const contact = loadContact();
+  if (!contact) {
+    alert("Please save an emergency contact first.");
+    $("cname").focus();
+    return;
+  }
+  const button = $("sosBtn");
+  button.disabled = true;
+  $("gpsStatus").textContent = "Getting current location...";
+  let loc = null;
+  try {
+    loc = await getCurrentLocation(7000);
+    $("gpsStatus").textContent = "Current location obtained. Opening SMS...";
+  } catch {
+    loc = getLastLocation();
+    $("gpsStatus").textContent = loc
+      ? "GPS unavailable. Using last saved location (may be outdated)."
+      : "Location unavailable. Opening SMS without a location link.";
+  }
+  const body = emergencyText(
+    "EMERGENCY SOS: I may have had an accident. Please contact me and send help immediately.",
+    loc
+  );
+  playEmergencySound("Emergency alert. Please help.");
+  openSMS(contact.num, body);
+  button.disabled = false;
+};
+
+// ---------- EMERGENCY SOUND / NEARBY ALERT ----------
+function playEmergencySound(message) {
+  try { if (navigator.vibrate) navigator.vibrate([400,150,400,150,600]); } catch {}
+  try {
+    if (!("speechSynthesis" in window)) return;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(message);
+    u.volume = 1; u.rate = 0.85;
+    speechSynthesis.speak(u);
+  } catch {}
+}
+window.showNearby = function() {
+  $("nearby").classList.remove("hide");
+  playEmergencySound("Please come here. I need help.");
+};
+window.hideNearby = function() {
+  $("nearby").classList.add("hide");
+  try { speechSynthesis.cancel(); } catch {}
+};
+window.playCurrentAlert = function() {
+  if (!current) return;
+  if (current === "call") return showNearby();
+  const spoken = current === "doctor" ? "Emergency. I need a doctor. Please help."
+    : current === "pain" ? "I am in pain. Please help me."
+    : current === "accident" ? "Emergency. Accident. Please help."
+    : "I need help. Please come here.";
+  playEmergencySound(spoken);
+};
+window.handleEmergency = async function() {
+  const c = loadContact();
+  if (!c) return alert("Please save an emergency contact first.");
+  let loc = null;
+  try { loc = await getCurrentLocation(5000); }
+  catch { loc = getLastLocation(); }
+  const msg = emergencyText(MESSAGES[current] || MESSAGES.help, loc);
+  openSMS(c.num, msg);
+};
+window.cancelAll = function() {
+  current = null;
+  $("confirm").classList.add("hide");
+  $("status").textContent = "Cancelled. No SMS composer opened.";
+};
+
+// ---------- FIVE UPLOADABLE VIDEO SLOTS (IndexedDB) ----------
+const DB_NAME = "isl_emergency_media";
+const DB_VERSION = 1;
+const STORE_NAME = "signVideos";
+function openVideoDB() {
+  return new Promise((resolve, reject) => {
+    if (!("indexedDB" in window)) return reject(new Error("This browser does not support IndexedDB."));
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME, {keyPath:"key"});
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error("Could not open video storage."));
+  });
+}
+async function dbPut(record) {
+  const db = await openVideoDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    tx.objectStore(STORE_NAME).put(record);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error || new Error("Video could not be saved.")); };
+  });
+}
+async function dbGet(key) {
+  const db = await openVideoDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const req = tx.objectStore(STORE_NAME).get(key);
+    req.onsuccess = () => { const r = req.result || null; db.close(); resolve(r); };
+    req.onerror = () => { db.close(); reject(req.error || new Error("Video could not be loaded.")); };
+  });
+}
+async function dbDelete(key) {
+  const db = await openVideoDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    tx.objectStore(STORE_NAME).delete(key);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error || new Error("Could not delete video.")); };
+  });
+}
+function releaseReferenceVideo() {
+  const v = $("referenceVideo");
+  v.pause();
+  v.removeAttribute("src");
+  v.load();
+  if (activeVideoUrl) URL.revokeObjectURL(activeVideoUrl);
+  activeVideoUrl = null;
+}
+function renderVideoButtons() {
+  const container = $("videoButtons");
+  container.replaceChildren();
+  for (const item of VIDEO_SIGNS) {
+    const row = document.createElement("div");
+    row.className = "sign-row";
+    const title = document.createElement("strong");
+    title.textContent = item.label + " sign video";
+    const status = document.createElement("p");
+    status.className = "note";
+    status.id = "videoState_" + item.key;
+    status.textContent = "Checking saved video...";
+    const file = document.createElement("input");
+    file.type = "file";
+    file.accept = "video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov";
+    file.setAttribute("aria-label", "Upload " + item.label + " sign video");
+    file.onchange = async () => {
+      const f = file.files && file.files[0];
+      if (!f) return;
+      if (!f.type.startsWith("video/") && !/\.(mp4|webm|mov)$/i.test(f.name)) {
+        alert("Please choose a video file such as MP4 or WebM.");
+        file.value = "";
+        return;
+      }
+      status.textContent = "Saving video...";
+      try {
+        await dbPut({key:item.key, name:f.name, type:f.type || "video/mp4", blob:f, savedAt:Date.now()});
+        status.textContent = "Saved on this device: " + f.name;
+        $("videoStatus").textContent = item.label + " video saved.";
+      } catch (e) {
+        status.textContent = "Save failed: " + (e.message || e) + ". Try a smaller video.";
+      }
+      file.value = "";
+    };
+    const play = document.createElement("button");
+    play.className = "green";
+    play.textContent = "Play saved " + item.label + " video";
+    play.onclick = async () => {
+      try {
+        const rec = await dbGet(item.key);
+        if (!rec) {
+          status.textContent = "No video saved yet. Choose a file above.";
+          return;
+        }
+        releaseReferenceVideo();
+        activeVideoUrl = URL.createObjectURL(rec.blob);
+        const v = $("referenceVideo");
+        v.src = activeVideoUrl;
+        v.classList.remove("hide");
+        v.load();
+        $("videoStatus").textContent = "Playing " + item.label + ": " + rec.name;
+        v.play().catch(() => {
+          $("videoStatus").textContent = "Video loaded. Tap Play in the video controls.";
+        });
+      } catch (e) {
+        status.textContent = "Could not load video: " + (e.message || e);
+      }
+    };
+    const remove = document.createElement("button");
+    remove.className = "grey";
+    remove.textContent = "Remove " + item.label + " video";
+    remove.onclick = async () => {
+      try {
+        await dbDelete(item.key);
+        status.textContent = "No video saved yet.";
+        $("videoStatus").textContent = item.label + " video removed.";
+      } catch (e) { status.textContent = e.message || String(e); }
+    };
+    row.append(title, status, file, play, remove);
+    container.append(row);
+  }
+  refreshVideoStatuses();
+}
+async function refreshVideoStatuses() {
+  for (const item of VIDEO_SIGNS) {
+    const status = $("videoState_" + item.key);
+    try {
+      const rec = await dbGet(item.key);
+      if (status) status.textContent = rec
+        ? "Saved on this device: " + rec.name
+        : "No video saved yet. Upload one below.";
+    } catch (e) {
+      if (status) status.textContent = "Video storage unavailable: " + (e.message || e);
+    }
+  }
+}
+window.clearAllVideos = async function() {
+  if (!confirm("Remove all five saved sign videos from this browser?")) return;
+  releaseReferenceVideo();
+  for (const item of VIDEO_SIGNS) {
+    try { await dbDelete(item.key); } catch {}
+  }
+  $("videoStatus").textContent = "Saved videos cleared.";
+  refreshVideoStatuses();
+};
+
+// ---------- MODEL LOADING ----------
+function loadScript(url) {
+  return new Promise((res, rej) => {
+    const el = document.createElement("script");
+    el.src = url;
+    el.onload = res;
+    el.onerror = () => rej(new Error("Could not load " + url));
     document.head.appendChild(el);
   });
 }
-async function initOrt(){
-  const errs=[];
-  for(const v of ["1.18.0","1.17.3","1.16.3"]){
-    try{
-      window.ort=undefined;
+async function initOrt() {
+  const errs = [];
+  for (const v of ["1.18.0","1.17.3","1.16.3"]) {
+    try {
+      delete window.ort;
       await loadScript(`https://cdn.jsdelivr.net/npm/onnxruntime-web@${v}/dist/ort.min.js`);
-      ort.env.wasm.numThreads=1;
-      ort.env.wasm.wasmPaths=`https://cdn.jsdelivr.net/npm/onnxruntime-web@${v}/dist/`;
-      const sess=await ort.InferenceSession.create("raw_transformer.onnx",{executionProviders:["wasm"]});
+      if (!window.ort) throw new Error("ort global not found after load");
+      ort.env.wasm.numThreads = 1;
+      ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${v}/dist/`;
+      const sess = await ort.InferenceSession.create("raw_transformer.onnx", {executionProviders:["wasm"]});
       return {sess,v};
-    }catch(e){ errs.push("ort "+v+": "+(e.message||e)); }
+    } catch (e) { errs.push("ort " + v + ": " + (e.message || e)); }
   }
-  throw new Error("[ONNX stage] "+errs.join(" | "));
+  throw new Error("[ONNX stage] " + errs.join(" | "));
 }
-async function getHandModel(){
-  const notes=[];
-  const sources=[["repo file","hand_landmarker.task?v=2"],
-    ["Google copy","https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"]];
-  for(const [name,url] of sources){
-    try{
-      const r=await fetch(url);
-      if(!r.ok) throw new Error("HTTP "+r.status);
-      const buf=new Uint8Array(await r.arrayBuffer());
-      if(buf.length<1000000) throw new Error("file too small ("+buf.length+" bytes)");
-      return {bytes:buf, src:name+" "+(buf.length/1e6).toFixed(1)+"MB"};
-    }catch(e){ notes.push(name+": "+(e.message||e)); }
+async function getHandModel() {
+  const notes = [];
+  const sources = [
+    ["repo file","hand_landmarker.task?v=2"],
+    ["Google copy","https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"]
+  ];
+  for (const [name,url] of sources) {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const buf = new Uint8Array(await r.arrayBuffer());
+      if (buf.length < 1000000) throw new Error("file too small (" + buf.length + " bytes)");
+      return {bytes:buf,src:name + " " + (buf.length/1e6).toFixed(1) + "MB"};
+    } catch (e) { notes.push(name + ": " + (e.message || e)); }
   }
-  throw new Error("[hand model] "+notes.join(" | "));
+  throw new Error("[hand model] " + notes.join(" | "));
 }
-async function initLegacy(){
-  // old @mediapipe/hands build (different wasm toolchain); wrapped to look like the Tasks API
-  const V="0.4.1675469240", base=`https://cdn.jsdelivr.net/npm/@mediapipe/hands@${V}/`;
-  await loadScript(base+"hands.js");
-  const hands=new Hands({locateFile:f=>base+f});
-  hands.setOptions({maxNumHands:2, modelComplexity:1, minDetectionConfidence:0.05, minTrackingConfidence:0.05, staticImageMode:true, selfieMode:false});
-  let last=null; hands.onResults(r=>{ last=r; });
+async function initLegacy() {
+  const V = "0.4.1675469240";
+  const base = `https://cdn.jsdelivr.net/npm/@mediapipe/hands@${V}/`;
+  await loadScript(base + "hands.js");
+  const hands = new Hands({locateFile:f => base + f});
+  hands.setOptions({maxNumHands:2,modelComplexity:1,minDetectionConfidence:0.05,minTrackingConfidence:0.05,staticImageMode:true,selfieMode:false});
+  let last = null;
+  hands.onResults(r => { last = r; });
   await hands.initialize();
-  return { detect: async (canvas)=>{
-      last=null;
-      try{ if(hands.reset) hands.reset(); }catch(e){}
-      await hands.send({image:canvas});
-      return { landmarks:(last&&last.multiHandLandmarks)?last.multiHandLandmarks:[] };
+  return {detect:async canvas => {
+    last = null;
+    try { if (hands.reset) hands.reset(); } catch {}
+    await hands.send({image:canvas});
+    return {landmarks:(last && last.multiHandLandmarks) ? last.multiHandLandmarks : []};
   }};
 }
-async function initMp(){
-  const hm=await getHandModel();
-  const errs=[];
-  for(const v of ["0.10.14","0.10.9","0.10.21"]){
+async function initMp() {
+  const hm = await getHandModel();
+  const errs = [];
+  for (const v of ["0.10.14","0.10.9","0.10.21"]) {
     let mod;
-    try{ mod=await import(`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${v}/vision_bundle.mjs`); }
-    catch(e){ errs.push("import "+v+": "+(e.message||e)); continue; }
-    for(const del of ["GPU","CPU"]){
-      try{
-        const vision=await mod.FilesetResolver.forVisionTasks(`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${v}/wasm`);
-        const lm=await mod.HandLandmarker.createFromOptions(vision,{
-          baseOptions:{ modelAssetBuffer:hm.bytes, delegate:del },
-          runningMode:"IMAGE", numHands:2,
-          minHandDetectionConfidence:0.05, minHandPresenceConfidence:0.05
+    try { mod = await import(`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${v}/vision_bundle.mjs`); }
+    catch (e) { errs.push("import " + v + ": " + (e.message || e)); continue; }
+    for (const del of ["GPU","CPU"]) {
+      try {
+        const vision = await mod.FilesetResolver.forVisionTasks(`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${v}/wasm`);
+        const lm = await mod.HandLandmarker.createFromOptions(vision, {
+          baseOptions:{modelAssetBuffer:hm.bytes,delegate:del},
+          runningMode:"IMAGE",numHands:2,
+          minHandDetectionConfidence:0.05,minHandPresenceConfidence:0.05
         });
-        return {lm,v:"tasks-vision "+v+" "+del,src:hm.src};
-      }catch(e){ errs.push("tasks "+v+" "+del+": "+(e.message||e)); }
+        return {lm,v:"tasks-vision " + v + " " + del,src:hm.src};
+      } catch (e) { errs.push("tasks " + v + " " + del + ": " + (e.message || e)); }
     }
   }
-  try{ const lm=await initLegacy(); return {lm,v:"LEGACY hands 0.4",src:"built-in"}; }
-  catch(e){ errs.push("legacy hands: "+(e.message||e)); }
-  throw new Error("[MediaPipe stage] "+errs.join(" | "));
+  try { const lm = await initLegacy(); return {lm,v:"LEGACY hands 0.4",src:"built-in"}; }
+  catch (e) { errs.push("legacy hands: " + (e.message || e)); }
+  throw new Error("[MediaPipe stage] " + errs.join(" | "));
 }
-async function init(){
-  try{
-    $("loadmsg").textContent="Loading models... (10-30 s)";
-    try{
-      scaler=await (await fetch("raw_scaler.json")).json();
-      if(scaler.mean.length!==DIM||scaler.scale.length!==DIM) throw new Error("wrong size");
-    }catch(e){ throw new Error("[scaler stage] raw_scaler.json: "+(e.message||e)); }
-    const o=await initOrt(); session=o.sess;
-    const m=await initMp(); landmarker=m.lm;
-    $("loadmsg").textContent=`Models ready ✔ (onnxruntime ${o.v}, hand detector: ${m.v})`;
-    $("recbtn").disabled=false; $("chkbtn").disabled=false;
-  }catch(e){
-    $("loadmsg").textContent="Model loading failed: "+(e.message||e);
+async function init() {
+  try {
+    $("status").textContent = "Loading models...";
+    try {
+      scaler = await (await fetch("raw_scaler.json")).json();
+      if (scaler.mean.length !== DIM || scaler.scale.length !== DIM) throw new Error("wrong size");
+    } catch (e) { throw new Error("[scaler stage] raw_scaler.json: " + (e.message || e)); }
+    const o = await initOrt(); session = o.sess;
+    const m = await initMp(); landmarker = m.lm;
+    $("status").textContent = `Models ready (ONNX Runtime ${o.v}; hand detector ${m.v}).`;
+    $("recbtn").disabled = false;
+    $("chkbtn").disabled = false;
+  } catch (e) {
+    $("status").textContent = "Model loading failed: " + (e.message || e);
   }
 }
 
-// ---------- camera / frames ----------
-window.startCam = async function(){
-  try{
-    stream = await navigator.mediaDevices.getUserMedia({video:{width:{ideal:640},height:{ideal:480},facingMode:"user"},audio:false});
-    $("cam").srcObject = stream; $("status").textContent="Camera ready.";
-  }catch(e){ $("status").textContent="Camera blocked. Allow camera permission, or use the upload option."; }
+// ---------- CAMERA AND SIGN RECOGNITION ----------
+window.startCam = async function() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{width:{ideal:640},height:{ideal:480},facingMode:"user"},
+      audio:false
+    });
+    $("cam").srcObject = stream;
+    await $("cam").play();
+    $("status").textContent = "Camera ready.";
+  } catch (e) {
+    $("status").textContent = "Camera blocked. Allow camera permission, or use the preloaded sign videos.";
+  }
 };
-const sleep = ms => new Promise(r=>setTimeout(r,ms));
-
-// draw source into a 640x480 canvas, letterboxed (same as the ffmpeg scale+pad used for the training/external videos)
-function grab(src, vw, vh){
-  const c=document.createElement("canvas"); c.width=W; c.height=H;
-  const g=c.getContext("2d"); g.fillStyle="#000"; g.fillRect(0,0,W,H);
-  const s=Math.min(W/vw, H/vh), dw=vw*s, dh=vh*s;
+const sleep = ms => new Promise(r => setTimeout(r,ms));
+function grab(src,vw,vh) {
+  const c = document.createElement("canvas"); c.width=W; c.height=H;
+  const g = c.getContext("2d"); g.fillStyle="#000"; g.fillRect(0,0,W,H);
+  const s = Math.min(W/vw,H/vh), dw=vw*s, dh=vh*s;
   g.drawImage(src,(W-dw)/2,(H-dh)/2,dw,dh);
   return c;
 }
-window.recordSign = async function(){
-  if(!stream) return alert("Open camera first.");
-  const v=$("cam"), ovl=$("ovl"); $("recbtn").disabled=true; $("confirm").classList.add("hide");
-  if(!v.videoWidth) { $("recbtn").disabled=false; return alert("Camera is not ready yet. Wait a second and try again."); }
-  for(let n=5;n>0;n--){
-    ovl.className=""; ovl.innerHTML=n+'<div style="font-size:20px;font-weight:700">Get ready: both hands inside the box</div>';
-    $("status").textContent="Get ready... recording in "+n; await sleep(1000);
+window.recordSign = async function() {
+  if (!stream) return alert("Open camera first.");
+  if (!session || !landmarker || !scaler) return alert("Models are not ready yet.");
+  const v = $("cam"), ovl = $("ovl");
+  $("recbtn").disabled = true; $("confirm").classList.add("hide");
+  if (!v.videoWidth) { $("recbtn").disabled=false; return alert("Camera is not ready. Wait and try again."); }
+  const frames = [], t0 = performance.now();
+  ovl.className = "rec";
+  ovl.innerHTML = '● SIGN NOW<div style="font-size:18px;font-weight:700">3 seconds</div>';
+  $("status").textContent = "Recording sign...";
+  for (let k=0; k<SEQ; k++) {
+    const wait = t0 + k*100 - performance.now();
+    if (wait > 0) await sleep(wait);
+    frames.push(grab(v,v.videoWidth||W,v.videoHeight||H));
   }
-  ovl.className="rec"; ovl.innerHTML='● SIGN NOW<div style="font-size:20px;font-weight:700">recording 3 seconds</div>';
-  $("status").textContent="RECORDING - sign now";
-  const frames=[], t0=performance.now();
-  for(let k=0;k<SEQ;k++){                       // 30 frames evenly over 3 s
-    const wait=t0+k*100-performance.now(); if(wait>0) await sleep(wait);
-    frames.push(grab(v, v.videoWidth||W, v.videoHeight||H));
-  }
-  ovl.className=""; ovl.innerHTML="";
-  $("status").textContent="Analysing sign...";
-  await analyse(frames);
-  $("recbtn").disabled=false;
+  ovl.className = ""; ovl.innerHTML = "";
+  $("status").textContent = "Analysing sign...";
+  try { await analyse(frames); }
+  catch (e) { $("status").textContent = "Analysis failed: " + (e.message || e); }
+  $("recbtn").disabled = false;
 };
-window.checkHands = async function(){
-  const v=$("cam"); if(!stream||!v.videoWidth) return alert("Open the camera first.");
-  const res=await landmarker.detect(grab(v, v.videoWidth, v.videoHeight));
-  const n=(res.landmarks||[]).length;
-  $("status").textContent = n+" hand(s) detected in this frame" + (n? (" (wrist x: "+res.landmarks.map(h=>h[0].x.toFixed(2)).join(", ")+")") : ". Move closer / more light / show palms to the camera.");
+window.checkHands = async function() {
+  const v = $("cam");
+  if (!stream || !v.videoWidth) return alert("Open camera first.");
+  if (!landmarker) return alert("Hand model is not ready yet.");
+  try {
+    const res = await landmarker.detect(grab(v,v.videoWidth,v.videoHeight));
+    const n = (res.landmarks || []).length;
+    $("status").textContent = n + " hand(s) detected in this frame.";
+  } catch (e) { $("status").textContent = "Hand check failed: " + (e.message || e); }
 };
-window.uploadFile = async function(f){
-  if(!f) return;
-  if(/\.(avi|mkv|wmv|flv)$/i.test(f.name)){
-    $("status").textContent="Browsers cannot play ."+f.name.split(".").pop()+" files. Please upload an .mp4 (or .webm) video.";
-    return;
-  }
-  $("confirm").classList.add("hide"); $("status").textContent="Reading video...";
-  const url=URL.createObjectURL(f), v=document.createElement("video");
-  v.muted=true; v.playsInline=true; v.src=url;
-  try{
-    await new Promise((res,rej)=>{ v.onloadedmetadata=res; v.onerror=()=>rej(new Error("cannot read video")); });
-    const dur=isFinite(v.duration)&&v.duration>0 ? v.duration : 3, frames=[];
-    for(let k=0;k<SEQ;k++){
-      v.currentTime = Math.min(dur*0.999, dur*k/(SEQ-1));
-      await new Promise(res=>{ v.onseeked=res; });
-      frames.push(grab(v, v.videoWidth, v.videoHeight));
-    }
-    $("status").textContent="Analysing sign...";
-    await analyse(frames);
-  }catch(e){ $("status").textContent="Could not read this video: "+(e.message||e); }
-  URL.revokeObjectURL(url);
-};
-
-// ---------- features: raw xyz of 2 hands, image-space slots (identical rule to training) ----------
-function frameRaw(res){
-  const out=new Float32Array(DIM), pres=[false,false];
-  if(!res.landmarks || !res.landmarks.length) return {out,pres};
-  let hands=res.landmarks.map(h=>({h, wx:h[0].x})).sort((a,b)=>a.wx-b.wx).slice(0,2);
-  const assign = hands.length===1 ? [[hands[0].wx<0.5?0:1, hands[0]]] : hands.map((d,i)=>[i,d]);
-  for(const [slot,d] of assign){
-    for(let j=0;j<21;j++){
-      const o=slot*63+j*3; out[o]=d.h[j].x; out[o+1]=d.h[j].y; out[o+2]=d.h[j].z;
+function frameRaw(res) {
+  const out = new Float32Array(DIM), pres = [false,false];
+  if (!res.landmarks || !res.landmarks.length) return {out,pres};
+  const hands = res.landmarks.map(h => ({h,wx:h[0].x})).sort((a,b)=>a.wx-b.wx).slice(0,2);
+  const assign = hands.length===1 ? [[hands[0].wx<0.5?0:1,hands[0]]] : hands.map((d,i)=>[i,d]);
+  for (const [slot,d] of assign) {
+    for (let j=0;j<21;j++) {
+      const o=slot*63+j*3;
+      out[o]=d.h[j].x; out[o+1]=d.h[j].y; out[o+2]=d.h[j].z;
     }
     pres[slot]=true;
   }
   return {out,pres};
 }
-async function analyse(frames){
-  const X=new Float64Array(SEQ*DIM); let anyN=0, leftN=0, rightN=0;
-  for(let t=0;t<SEQ;t++){
-    const res=await landmarker.detect(frames[t]);
-    const {out,pres}=frameRaw(res);
-    for(let i=0;i<DIM;i++) X[t*DIM+i]=out[i];
-    if(pres[0]||pres[1]) anyN++; if(pres[0]) leftN++; if(pres[1]) rightN++;
-    if(t%5===4) await sleep(0);                  // keep the UI responsive
+async function analyse(frames) {
+  const X = new Float64Array(SEQ*DIM);
+  let anyN=0,leftN=0,rightN=0;
+  for (let t=0;t<SEQ;t++) {
+    const res = await landmarker.detect(frames[t]);
+    const {out,pres} = frameRaw(res);
+    for (let i=0;i<DIM;i++) X[t*DIM+i]=out[i];
+    if (pres[0]||pres[1]) anyN++;
+    if (pres[0]) leftN++;
+    if (pres[1]) rightN++;
+    if (t%5===4) await sleep(0);
   }
   const anyRate=anyN/SEQ;
-  if(anyRate<ANY_RATE_MIN){
-    $("status").textContent="No hands detected clearly. Please sign properly with both hands visible and try again.";
-    $("dbg").textContent=`hands in ${(anyRate*100).toFixed(0)}% of frames`; return;
+  if (anyRate<ANY_RATE_MIN) {
+    $("status").textContent="No hands detected clearly. Show your hands in good light and try again.";
+    $("dbg").textContent=`Hands detected in ${(anyRate*100).toFixed(0)}% of frames`;
+    return;
   }
-  const xs=new Float32Array(SEQ*DIM);
-  for(let t=0;t<SEQ;t++) for(let i=0;i<DIM;i++) xs[t*DIM+i]=(X[t*DIM+i]-scaler.mean[i])/scaler.scale[i];
-  let mx=0; for(let i=0;i<xs.length;i++){ const a=Math.abs(xs[i]); if(a>mx) mx=a; }
-  const outp=await session.run({x:new ort.Tensor("float32",xs,[1,SEQ,DIM])});
-  const lg=Array.from(outp.logits.data), m=Math.max(...lg), ex=lg.map(v=>Math.exp(v-m)), s=ex.reduce((a,b)=>a+b,0);
-  const p=ex.map(v=>v/s), k=p.indexOf(Math.max(...p));
-  $("dbg").textContent = "hands in "+(anyRate*100).toFixed(0)+"% of frames (slot0 "+(leftN/SEQ*100).toFixed(0)+"%, slot1 "+(rightN/SEQ*100).toFixed(0)+"%), max|scaled|="+mx.toFixed(1)+"\n"+
-     CLASSES.map((c,i)=>c+" "+(p[i]*100).toFixed(0)+"%").join("  ");
-  if(p[k]<CONF_MIN){ $("status").textContent="No clear sign detected. Please sign properly and try again."; return; }
-  current=CLASSES[k]; showConfirm(current,p[k]);
+  const xs = new Float32Array(SEQ*DIM);
+  for (let t=0;t<SEQ;t++) for (let i=0;i<DIM;i++) {
+    const scale = scaler.scale[i] || 1;
+    xs[t*DIM+i]=(X[t*DIM+i]-scaler.mean[i])/scale;
+  }
+  const outp = await session.run({x:new ort.Tensor("float32",xs,[1,SEQ,DIM])});
+  const lg = Array.from(outp.logits.data), m=Math.max(...lg);
+  const ex=lg.map(v=>Math.exp(v-m)), sum=ex.reduce((a,b)=>a+b,0);
+  const p=ex.map(v=>v/sum), k=p.indexOf(Math.max(...p));
+  $("dbg").textContent =
+    "Hands in "+(anyRate*100).toFixed(0)+"% of frames\n"+
+    CLASSES.map((c,i)=>c+" "+(p[i]*100).toFixed(0)+"%").join("  ");
+  if (p[k]<CONF_MIN) {
+    $("status").textContent="No clear sign detected. Try again.";
+    return;
+  }
+  current=CLASSES[k];
+  showConfirm(current,p[k]);
 }
-
-// ---------- confirm / call / sms ----------
-function showConfirm(label,conf){
+function showConfirm(label,conf) {
   $("status").textContent="";
-  $("label").textContent = label.toUpperCase()+" ("+Math.round(conf*100)+"%)";
-  const c=loadContact();
-  const isCall = (label==="call");           // CALL sign = calling someone nearby ("come here"), NOT a phone call
-  $("nearbyActions").classList.toggle("hide", !isCall);
-  $("actions").classList.toggle("hide", isCall || !c);
-  if(isCall) $("msg").textContent = "Is this the sign you meant? This shows a loud 'Come here!' alert for people nearby. No phone call or SMS is made.";
-  else $("msg").textContent = c ? `Is this the sign you meant? Message to send: "${MESSAGES[label]}"` : "Save an emergency contact above first.";
+  $("label").textContent=label.toUpperCase()+" ("+Math.round(conf*100)+"%)";
+  $("msg").textContent = label==="call"
+    ? "This action makes a nearby attention alert. No phone call is made."
+    : "Review the suggested action before continuing. SMS is not sent until you press Send in your messaging app.";
+  $("actions").classList.toggle("hide",label==="call");
   $("confirm").classList.remove("hide");
+  if (label==="call") showNearby();
 }
-window.showNearby = function(){
-  const o=$("nearby"); o.style.display="flex";
-  try{ if(navigator.vibrate) navigator.vibrate([400,200,400,200,400]); }catch(e){}
-  try{ speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance("Please come here"); u.lang="en-IN"; u.rate=0.9; speechSynthesis.speak(u); }catch(e){}
-};
-window.hideNearby = function(){ $("nearby").style.display="none"; try{ speechSynthesis.cancel(); }catch(e){} };
-window.cancelAll = function(){ current=null; $("confirm").classList.add("hide"); $("status").textContent="Cancelled. Nothing was sent."; };
-window.doCall = function(){ const c=loadContact(); if(c&&current) location.href="tel:"+c.num; };
-window.doSms = function(){
-  const c=loadContact(); if(!c||!current) return;
-  const sep=/iPhone|iPad|iPod/i.test(navigator.userAgent)?"&":"?";
-  location.href=`sms:${c.num}${sep}body=${encodeURIComponent(MESSAGES[current])}`;
-};
-showSaved(); init();
-</script></body></html>
+showSaved();
+renderVideoButtons();
+init();
+</script>
+</body>
+</html>
