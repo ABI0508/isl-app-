@@ -14,6 +14,7 @@
   button.red { background:#dc2626; }
   button.grey { background:#6b7690; }
   button.green { background:#16803c; }
+  button.orange { background:#d97706; }
   input[type=text],input[type=tel],input[type=file] { width:100%; padding:10px; font-size:15px; margin:5px 0; }
   video { width:100%; border-radius:10px; background:#111; }
   .note { font-size:13px; color:#65718a; line-height:1.45; }
@@ -28,6 +29,8 @@
   .sign-row strong { display:block; margin-bottom:4px; }
   .actions-grid { display:grid; grid-template-columns:1fr; gap:5px; }
   @media (min-width:480px) { .actions-grid { grid-template-columns:1fr 1fr; } }
+  .pred-result { margin-top:8px; padding:10px; border-radius:8px; background:#eef4ff; border:1px solid #c7d7f5; font-size:14px; }
+  .pred-result strong { color:#1a3a8a; }
 </style>
 </head>
 <body>
@@ -54,8 +57,8 @@
 </div>
 
 <div class="card">
-  <h3>Five preloaded sign videos</h3>
-  <p class="note">Upload one reference video for each sign. Videos are saved in this browser on this device using IndexedDB. If browser storage is cleared or you change device/browser, upload them again. Keep videos reasonably small.</p>
+  <h3>Five sign videos (upload + predict + action)</h3>
+  <p class="note">Upload one reference video for each sign. Videos are saved in this browser on this device using IndexedDB. Use "Predict this video" to run the model. After the result, press the action button to trigger the correct action for that sign. Nothing is sent until you press the button.</p>
   <div id="videoButtons"></div>
   <video id="referenceVideo" controls playsinline preload="metadata" class="hide"></video>
   <p id="videoStatus" class="note" aria-live="polite"></p>
@@ -240,19 +243,46 @@ window.playCurrentAlert = function() {
     : "I need help. Please come here.";
   playEmergencySound(spoken);
 };
-window.handleEmergency = async function() {
+
+// ---------- SHARED ACTION FOR A SIGN ----------
+// Used by BOTH camera recognition and uploaded-video prediction.
+// "call" = nearby alert + sound (no SMS). All other signs = SMS + live location + sound.
+async function triggerActionForSign(sign, onStatus) {
+  if (sign === "call") {
+    if (onStatus) onStatus("Showing nearby attention alert (no SMS for CALL).");
+    showNearby();
+    return;
+  }
   const c = loadContact();
-  if (!c) return alert("Please save an emergency contact first.");
+  if (!c) {
+    alert("Please save an emergency contact first.");
+    if (onStatus) onStatus("No emergency contact saved.");
+    return;
+  }
+  if (onStatus) onStatus("Getting current location...");
   let loc = null;
-  try { loc = await getCurrentLocation(5000); }
-  catch { loc = getLastLocation(); }
-  const msg = emergencyText(MESSAGES[current] || MESSAGES.help, loc);
+  try {
+    loc = await getCurrentLocation(7000);
+    if (onStatus) onStatus("Location obtained. Opening SMS...");
+  } catch {
+    loc = getLastLocation();
+    if (onStatus) onStatus(loc
+      ? "GPS unavailable. Using last saved location (may be outdated)."
+      : "Location unavailable. Opening SMS without a location link.");
+  }
+  const msg = emergencyText(MESSAGES[sign] || MESSAGES.help, loc);
+  playEmergencySound("Emergency alert. Please help.");
   openSMS(c.num, msg);
+}
+window.handleEmergency = async function() {
+  if (!current) return;
+  await triggerActionForSign(current, t => { $("status").textContent = t; });
 };
+
 window.cancelAll = function() {
   current = null;
   $("confirm").classList.add("hide");
-  $("status").textContent = "Cancelled. No SMS composer opened.";
+  $("status").textContent = "Cancelled. No action taken.";
 };
 
 // ---------- FIVE UPLOADABLE VIDEO SLOTS (IndexedDB) ----------
@@ -306,6 +336,58 @@ function releaseReferenceVideo() {
   if (activeVideoUrl) URL.revokeObjectURL(activeVideoUrl);
   activeVideoUrl = null;
 }
+
+// ---------- PREDICT AN UPLOADED VIDEO ----------
+async function predictVideoBlob(blob, label) {
+  if (!session || !landmarker || !scaler) {
+    throw new Error("Models are not ready yet. Wait for 'Models ready' status.");
+  }
+  const url = URL.createObjectURL(blob);
+  const v = document.createElement("video");
+  v.muted = true;
+  v.playsInline = true;
+  v.preload = "auto";
+  v.src = url;
+
+  try {
+    await new Promise((resolve, reject) => {
+      v.onloadedmetadata = () => resolve();
+      v.onerror = () => reject(new Error("Could not load video for prediction."));
+      v.load();
+    });
+
+    const duration = v.duration;
+    if (!isFinite(duration) || duration <= 0) {
+      throw new Error("Video duration not available. Try a different video.");
+    }
+
+    v.currentTime = 0;
+    await new Promise((resolve, reject) => {
+      v.onseeked = () => resolve();
+      v.onerror = () => reject(new Error("Seek failed."));
+    });
+
+    const frames = [];
+    const step = duration / SEQ;
+    for (let k = 0; k < SEQ; k++) {
+      const t = Math.min(duration - 0.01, k * step);
+      await new Promise((resolve, reject) => {
+        const onSeek = () => { v.removeEventListener("seeked", onSeek); resolve(); };
+        v.addEventListener("seeked", onSeek);
+        v.onerror = () => reject(new Error("Seek failed at frame " + k));
+        v.currentTime = t;
+      });
+      frames.push(grab(v, v.videoWidth || W, v.videoHeight || H));
+    }
+
+    return await analyseFrames(frames, label);
+  } finally {
+    v.removeAttribute("src");
+    v.load();
+    URL.revokeObjectURL(url);
+  }
+}
+
 function renderVideoButtons() {
   const container = $("videoButtons");
   container.replaceChildren();
@@ -364,6 +446,54 @@ function renderVideoButtons() {
         status.textContent = "Could not load video: " + (e.message || e);
       }
     };
+    const predict = document.createElement("button");
+    predict.className = "orange";
+    predict.textContent = "Predict this video";
+    predict.onclick = async () => {
+      const resBox = document.getElementById("predResult_" + item.key);
+      resBox.classList.remove("hide");
+      resBox.innerHTML = "Predicting... please wait.";
+      predict.disabled = true;
+      try {
+        const rec = await dbGet(item.key);
+        if (!rec) {
+          resBox.innerHTML = "No video saved yet. Upload one first.";
+          return;
+        }
+        const result = await predictVideoBlob(rec.blob, item.label);
+        if (!result || result.label === "none") {
+          resBox.innerHTML = "No hands detected in the video. Try a clearer video.";
+          return;
+        }
+        const topPct = Math.round(result.conf * 100);
+        const rows = CLASSES.map((c, i) =>
+          `<div>${c}: ${(result.probs[i] * 100).toFixed(1)}%</div>`
+        ).join("");
+        const matched = result.label === item.key;
+        const isCall = result.label === "call";
+        const actionLabel = isCall
+          ? "Show nearby alert (no SMS for CALL)"
+          : "Send emergency SMS with live location (" + result.label.toUpperCase() + ")";
+        resBox.innerHTML =
+          `<strong>Result: ${result.label.toUpperCase()} (${topPct}%)</strong>` +
+          `<div class="note" style="margin-top:4px">${matched ? "Matches the uploaded sign." : "Does not match the uploaded sign."}</div>` +
+          `<div style="margin-top:6px;font-size:13px">${rows}</div>` +
+          `<div class="note" style="margin-top:4px">Hands detected in ${(result.anyRate * 100).toFixed(0)}% of sampled frames.</div>` +
+          `<button class="${isCall ? "red" : "red"}" style="margin-top:10px" data-predaction="${result.label}">${actionLabel}</button>` +
+          `<p class="note" id="predStatus_${item.key}" aria-live="polite"></p>`;
+        const actionBtn = resBox.querySelector("[data-predaction]");
+        actionBtn.onclick = async () => {
+          actionBtn.disabled = true;
+          const st = document.getElementById("predStatus_" + item.key);
+          await triggerActionForSign(result.label, t => { if (st) st.textContent = t; });
+          actionBtn.disabled = false;
+        };
+      } catch (e) {
+        resBox.innerHTML = "Error: " + (e.message || e);
+      } finally {
+        predict.disabled = false;
+      }
+    };
     const remove = document.createElement("button");
     remove.className = "grey";
     remove.textContent = "Remove " + item.label + " video";
@@ -372,9 +502,15 @@ function renderVideoButtons() {
         await dbDelete(item.key);
         status.textContent = "No video saved yet.";
         $("videoStatus").textContent = item.label + " video removed.";
+        const resBox = document.getElementById("predResult_" + item.key);
+        resBox.classList.add("hide");
+        resBox.innerHTML = "";
       } catch (e) { status.textContent = e.message || String(e); }
     };
-    row.append(title, status, file, play, remove);
+    const resBox = document.createElement("div");
+    resBox.id = "predResult_" + item.key;
+    resBox.className = "pred-result hide";
+    row.append(title, status, file, play, predict, resBox, remove);
     container.append(row);
   }
   refreshVideoStatuses();
@@ -397,6 +533,8 @@ window.clearAllVideos = async function() {
   releaseReferenceVideo();
   for (const item of VIDEO_SIGNS) {
     try { await dbDelete(item.key); } catch {}
+    const resBox = document.getElementById("predResult_" + item.key);
+    if (resBox) { resBox.classList.add("hide"); resBox.innerHTML = ""; }
   }
   $("videoStatus").textContent = "Saved videos cleared.";
   refreshVideoStatuses();
@@ -539,8 +677,15 @@ window.recordSign = async function() {
   }
   ovl.className = ""; ovl.innerHTML = "";
   $("status").textContent = "Analysing sign...";
-  try { await analyse(frames); }
-  catch (e) { $("status").textContent = "Analysis failed: " + (e.message || e); }
+  try {
+    const result = await analyseFrames(frames, null);
+    if (result && result.label !== "none") {
+      current = result.label;
+      showConfirm(current, result.conf);
+    }
+  } catch (e) {
+    $("status").textContent = "Analysis failed: " + (e.message || e);
+  }
   $("recbtn").disabled = false;
 };
 window.checkHands = async function() {
@@ -567,7 +712,9 @@ function frameRaw(res) {
   }
   return {out,pres};
 }
-async function analyse(frames) {
+
+// Shared analysis: works for camera frames and for video-sampled frames
+async function analyseFrames(frames, contextLabel) {
   const X = new Float64Array(SEQ*DIM);
   let anyN=0,leftN=0,rightN=0;
   for (let t=0;t<SEQ;t++) {
@@ -581,9 +728,11 @@ async function analyse(frames) {
   }
   const anyRate=anyN/SEQ;
   if (anyRate<ANY_RATE_MIN) {
-    $("status").textContent="No hands detected clearly. Show your hands in good light and try again.";
-    $("dbg").textContent=`Hands detected in ${(anyRate*100).toFixed(0)}% of frames`;
-    return;
+    if (!contextLabel) {
+      $("status").textContent="No hands detected clearly. Show your hands in good light and try again.";
+      $("dbg").textContent=`Hands detected in ${(anyRate*100).toFixed(0)}% of frames`;
+    }
+    return {label:"none", conf:0, probs:new Array(CLASSES.length).fill(0), anyRate};
   }
   const xs = new Float32Array(SEQ*DIM);
   for (let t=0;t<SEQ;t++) for (let i=0;i<DIM;i++) {
@@ -594,26 +743,25 @@ async function analyse(frames) {
   const lg = Array.from(outp.logits.data), m=Math.max(...lg);
   const ex=lg.map(v=>Math.exp(v-m)), sum=ex.reduce((a,b)=>a+b,0);
   const p=ex.map(v=>v/sum), k=p.indexOf(Math.max(...p));
-  $("dbg").textContent =
-    "Hands in "+(anyRate*100).toFixed(0)+"% of frames\n"+
-    CLASSES.map((c,i)=>c+" "+(p[i]*100).toFixed(0)+"%").join("  ");
-  if (p[k]<CONF_MIN) {
-    $("status").textContent="No clear sign detected. Try again.";
-    return;
+  if (!contextLabel) {
+    $("dbg").textContent =
+      "Hands in "+(anyRate*100).toFixed(0)+"% of frames\n"+
+      CLASSES.map((c,i)=>c+" "+(p[i]*100).toFixed(0)+"%").join("  ");
   }
-  current=CLASSES[k];
-  showConfirm(current,p[k]);
+  return {label:CLASSES[k], conf:p[k], probs:p, anyRate};
 }
+
 function showConfirm(label,conf) {
   $("status").textContent="";
   $("label").textContent=label.toUpperCase()+" ("+Math.round(conf*100)+"%)";
   $("msg").textContent = label==="call"
-    ? "This action makes a nearby attention alert. No phone call is made."
+    ? "This action shows a nearby attention alert. No SMS and no phone call is made."
     : "Review the suggested action before continuing. SMS is not sent until you press Send in your messaging app.";
   $("actions").classList.toggle("hide",label==="call");
   $("confirm").classList.remove("hide");
   if (label==="call") showNearby();
 }
+
 showSaved();
 renderVideoButtons();
 init();
