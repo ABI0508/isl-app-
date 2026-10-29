@@ -100,7 +100,7 @@
 </div>
 
 <div id="nearby" class="hide" style="position:fixed;inset:0;z-index:99;background:#dc2626;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:20px">
-  <div style="font-size:48px;font-weight:900;line-height:1.2">PLEASE HELP!<br>உதவுங்கள்!</div>
+  <div class="nearby-headline" style="font-size:48px;font-weight:900;line-height:1.2">PLEASE HELP!<br>உதவுங்கள்!</div>
   <div style="font-size:20px;margin:18px 0 28px">Someone nearby needs help.</div>
   <button onclick="hideNearby()" style="background:#fff;color:#dc2626;width:auto;padding:14px 28px;font-weight:800">Close alert</button>
 </div>
@@ -276,20 +276,30 @@ function openSmsModal(contacts, message, title, note) {
 }
 
 // ---------- SHARED ACTION FOR A SIGN ----------
-// "call" => nearby alert + sound (no SMS). Others => SMS modal with one button per contact,
-// using a single GPS reading shared across contacts.
+// All signs except "accident": nearby alert + sound + SMS with location
+// "accident": SMS only (nearby people naturally respond to an accident scene)
+// "call": nearby alert only (no SMS)
 async function triggerActionForSign(sign, onStatus) {
+  // ---------- NEARBY ALERT (all signs except accident) ----------
+  if (sign !== "accident") {
+    if (onStatus) onStatus("Showing nearby attention alert...");
+    showNearbyForSign(sign);
+  }
+
+  // ---------- CALL: no SMS ----------
   if (sign === "call") {
     if (onStatus) onStatus("Showing nearby attention alert (no SMS for CALL).");
-    showNearby();
     return;
   }
+
+  // ---------- SMS WITH CURRENT LOCATION ----------
   const contacts = loadContacts();
   if (!contacts.length) {
     alert("Please add at least one emergency contact first.");
     if (onStatus) onStatus("No emergency contacts saved.");
     return;
   }
+
   if (onStatus) onStatus("Getting current location...");
   let loc = null;
   try {
@@ -301,8 +311,8 @@ async function triggerActionForSign(sign, onStatus) {
       ? "GPS unavailable. Using last saved location (may be outdated)."
       : "Location unavailable. Opening SMS without a location link.");
   }
+
   const msg = emergencyText(MESSAGES[sign] || MESSAGES.help, loc);
-  playEmergencySound("Emergency alert. Please help.");
   openSmsModal(
     contacts,
     msg,
@@ -321,7 +331,7 @@ window.cancelAll = function() {
   $("status").textContent = "Cancelled. No action taken.";
 };
 
-// ---------- SOS ----------
+// ---------- SOS (UNCHANGED — sends SMS to home contacts) ----------
 window.accidentSOS = async function() {
   const contacts = loadContacts();
   if (!contacts.length) {
@@ -383,6 +393,30 @@ window.playCurrentAlert = function() {
     : current === "accident" ? "Emergency. Accident. Please help."
     : "I need help. Please come here.";
   playEmergencySound(spoken);
+};
+
+// ---------- SIGN-SPECIFIC NEARBY ALERTS (NEW) ----------
+const NEARBY_LABELS = {
+  help:     { en: "PLEASE HELP!",              ta: "உதவுங்கள்!" },
+  doctor:   { en: "I NEED A DOCTOR!",          ta: "மருத்துவர் தேவை!" },
+  pain:     { en: "PLEASE CALL AN AMBULANCE!", ta: "ஆம்புலன்ஸ் அழையுங்கள்!" },
+  call:     { en: "PLEASE COME HERE!",         ta: "இங்கே வாருங்கள்!" },
+  accident: { en: null,                        ta: null }
+};
+const NEARBY_SPOKEN = {
+  help:   "Please help. I need help.",
+  doctor: "Emergency. I need a doctor. Please help me.",
+  pain:   "I am in pain. Please call an ambulance.",
+  call:   "Please come here. I need help."
+};
+window.showNearbyForSign = function(sign) {
+  const lab = NEARBY_LABELS[sign] || NEARBY_LABELS.help;
+  if (!lab.en) return;   // accident: skip
+  const overlay = $("nearby");
+  const headline = overlay.querySelector(".nearby-headline");
+  if (headline) headline.innerHTML = `${lab.en}<br>${lab.ta || ""}`;
+  overlay.classList.remove("hide");
+  playEmergencySound(NEARBY_SPOKEN[sign] || "Please help. I need help.");
 };
 
 // ---------- FIVE UPLOADABLE VIDEO SLOTS (IndexedDB) ----------
